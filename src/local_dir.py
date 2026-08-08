@@ -42,7 +42,7 @@ class TascalApp:
 
     
 
-
+    #def print_database_table():
 #print(dirs.user_data_dir)
 #print(dirs.user_cache_dir)
 #print(dirs.user_log_dir)
