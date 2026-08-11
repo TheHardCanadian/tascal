@@ -90,3 +90,26 @@ class TascalREPL(cmd.Cmd):
     
         self.conn.commit()
         print("Successful connection and update")
+
+    def do_today(self, arg):
+        try:
+            from datetime import date
+            today = date.today().isoformat()
+
+            self.cursor.execute("""
+            SELECT title, start_time, end_time
+            FROM events
+            WHERE DATE(start_time) = DATE(?)
+            ORDER BY start_time                      
+            """, (today,))
+
+            events = self.cursor.fetchall()
+            if events:
+                print("Today's schedule currently looks like:\n")
+                for title, start, end in events:
+                    print(f" - {title}: {start} -> {end}")
+            else:
+                print(f"No events scheduled for {today}")
+            
+        except Exception as e:
+            print(f"Errors {e}")
