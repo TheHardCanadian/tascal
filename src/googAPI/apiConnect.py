@@ -63,16 +63,17 @@ def google_api_connect():    # rename to "Connect"
         app.save_tokens(creds.to_json())
 
     print("Connection Successful")
+    return creds
 
+
+def full_update(creds):
+    app= TascalApp
     conn = sqlite3.connect(app.db_path)
     cursor = conn.cursor()
 #Attach the incoming calendar apis to their respective tables
 
     #Build services and transfer to the database
     try:
-
-
-        
         calendarService = build("calendar", "v3", credentials=creds)
         calendarEvents =get_calendar_events(calendarService)
         calendarList = get_calendars(calendarService)

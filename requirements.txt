@@ -1,0 +1,1 @@
+This is the requirements doc for tascal, a program that allows you to skip the mumbo jump everything is colour of the internet, and use your calendar tools directly from the command line.:wq
