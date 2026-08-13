@@ -21,7 +21,7 @@ class TascalREPL(cmd.Cmd):
 
     def __init__(self):
         super().__init__()
-        self.app = TascalApp
+        self.app = TascalApp()
         self.creds = None
         self.cursor = None
         self.conn = None
@@ -105,11 +105,23 @@ class TascalREPL(cmd.Cmd):
 
             events = self.cursor.fetchall()
             if events:
-                print("Today's schedule currently looks like:\n")
+                print("\nToday's schedule currently looks like:\n")
                 for title, start, end in events:
                     print(f" - {title}: {start} -> {end}")
+                print("\n")
             else:
                 print(f"No events scheduled for {today}")
-            
+
         except Exception as e:
             print(f"Errors {e}")
+
+    def do_exit(self, arg):
+        print("Exiting the program....\nThanks for using Tascal!")
+        if self.conn:
+            self.conn.close()
+        return True
+
+    def do_quit(self, arg):
+        return self.do_exit(arg)
+    
+    
