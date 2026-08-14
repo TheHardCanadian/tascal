@@ -10,9 +10,11 @@ from src.googAPI.apiConnect import (
     get_task_lists
 )
 from src.db_schema import update_check, insert_event, insert_calendar, insert_task, insert_task_list
+from src.functions import simplifyTime
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
+from datetime import date, time, timedelta
 
 class TascalREPL(cmd.Cmd):
     intro = "\n--Welcome to Tascal--\n"
@@ -93,7 +95,6 @@ class TascalREPL(cmd.Cmd):
 
     def do_today(self, arg):
         try:
-            from datetime import date
             today = date.today().isoformat()
 
             self.cursor.execute("""
@@ -107,13 +108,54 @@ class TascalREPL(cmd.Cmd):
             if events:
                 print("\nToday's schedule currently looks like:\n")
                 for title, start, end in events:
-                    print(f" - {title}: {start} -> {end}")
+                    print(f" - {title}: {simplifyTime(start)} -> {simplifyTime(end)}")
                 print("\n")
             else:
                 print(f"No events scheduled for {today}")
 
         except Exception as e:
             print(f"Errors {e}")
+
+
+    def do_upcoming(self, arg):
+        
+
+        if len(arg.split()) > 1:
+            print("Usage: upcoming <[week, month, year]> --> no argument returns upcoming week")
+            return
+
+        timeframe = arg.strip().lower() if arg else "week"
+
+        try:
+            today = date.today()
+            if timeframe == "week":
+                enddate = (date.today() + timedelta(days = 7))
+            elif timeframe == "month":
+                print("month selected")
+                enddate = (date.today() + timedelta(days = 30))
+            elif timeframe == "year":
+                print("year selected")
+                enddate = date(today.year, 12, 31)
+            else:
+                print("Usage: upcoming <[week, month, year]> --> no argument returns upcoming week")
+                return
+
+
+            self.cursor.execute("""
+            SELECT title, start_time, end_time FROM events
+            WHERE DATE(start_time) BETWEEN DATE(?) AND DATE(?)
+            ORDER BY start_time
+            """, (today.isoformat(), enddate.isoformat()))
+
+            events = self.cursor.fetchall()
+            if events:
+                print(f"\nUpcoming: {timeframe} \n")
+                for title, start, end in events:
+                    print(f"- {title}: {simplifyTime(start)} -> {simplifyTime(end)}")
+                print()
+        except Exception as e:
+            print(f"Error {e}")
+        
 
     def do_exit(self, arg):
         print("Exiting the program....\nThanks for using Tascal!")
@@ -123,5 +165,6 @@ class TascalREPL(cmd.Cmd):
 
     def do_quit(self, arg):
         return self.do_exit(arg)
+
     
     
