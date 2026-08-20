@@ -9,8 +9,17 @@ from src.googAPI.apiConnect import (
     get_tasks,
     get_task_lists
 )
-from src.db_schema import update_check, insert_event, insert_calendar, insert_task, insert_task_list
-from src.functions import simplifyTime
+from src.db_schema import (
+    update_check, 
+    insert_event, 
+    insert_calendar, 
+    insert_task, 
+    insert_task_list, 
+    delete_task,
+    delete_calendar,
+    delete_event
+)
+from src.functions import simplifyTime, dateCheck
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
@@ -40,6 +49,7 @@ class TascalREPL(cmd.Cmd):
             print("DATABASE CONNECTED")
             self.creds = google_api_connect()
             print("GOOGLE SERVER CONNECTED")
+            self.do_sync("")
         except Exception as e:
             print(f"Initialization error: {e}")
 
@@ -50,11 +60,11 @@ class TascalREPL(cmd.Cmd):
 
         try:
                 calendarService = build("calendar", "v3", credentials=self.creds)
-                calendarEvents =get_calendar_events(calendarService)
-                calendarList = get_calendars(calendarService)
+                calendarEvents =get_calendar_events(calendarService, self.cursor)
+                calendarList = get_calendars(calendarService, self.cursor)
         
                 taskService = build("tasks", "v1", credentials=self.creds)
-                taskEvents = get_tasks(taskService)
+                taskEvents = get_tasks(taskService, self.cursor)
                 taskLists = get_task_lists(taskService)
         
         except HttpError as error:
@@ -65,18 +75,23 @@ class TascalREPL(cmd.Cmd):
             #print(f"Tasks: {taskEvents}")
             if calendarEvents != None:
                 for event in calendarEvents:
+                    if event.get('status') == 'cancelled':
+                        delete_event(self.cursor, event['id'])
                     if update_check(self.cursor, event):
                         #print(f"inserting event")
                         insert_event(self.cursor, event)
     
             if calendarList != None:
                 for calendar in calendarList:
+                    if calendar.get('deleted') == True:
+                        delete_calendar(self.cursor, calendar['id'])
                     if update_check (self.cursor, calendar):
                         insert_calendar(self.cursor, calendar)
             
             if taskEvents != None:
                 for task in taskEvents:
-                    #print(f"inserting task {task}")
+                    if task.get('deleted') == True:
+                        delete_task(self.cursor, task['id'])
                     if update_check(self.cursor, task):
                         insert_task(self.cursor, task)
     
@@ -149,8 +164,11 @@ class TascalREPL(cmd.Cmd):
 
             events = self.cursor.fetchall()
             if events:
+                current_date=date.today().strftime("%B %d, %Y")
                 print(f"\nUpcoming: {timeframe} \n")
+                print(f"---Today ({current_date})---\n")
                 for title, start, end in events:
+                    current_date = dateCheck(start, current_date)
                     print(f"- {title}: {simplifyTime(start)} -> {simplifyTime(end)}")
                 print()
         except Exception as e:

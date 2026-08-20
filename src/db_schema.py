@@ -81,6 +81,17 @@ def setup_database(db_path):
     '''
     )
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sync_state (
+            resource_type TEXT,
+            resource_id TEXT, -- calendar_id or tasklist_id
+            sync_token TEXT,
+            last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (resource_type, resource_id)
+        )
+    '''
+    )
+
     conn.commit()
     conn.close()
     print(f"Database initialized at {db_path}")
@@ -92,6 +103,19 @@ def update_check(cursor, api_event):
     row=cursor.fetchone()
 
     return row is None or row[0] != api_event.get('etag')
+
+def get_sync_token(cursor, resource_type, resource_id):
+    cursor.execute('SELECT sync_token FROM sync_state WHERE resource_type = ? AND resource_id = ?', (resource_type, resource_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+def save_sync_token(cursor, resource_type, resource_id, sync_token):
+    cursor.execute('''
+        INSERT OR REPLACE INTO sync_state (resource_type, resource_id, sync_token, last_sync)
+        VALUES (?,?,?,?)
+    ''', (resource_type, resource_id, sync_token, datetime.now()))
+    print(f"Sync token saved  {resource_type}, {resource_id} ")
+
 
 def insert_event(cursor, event):
     cursor.execute('''
@@ -115,7 +139,9 @@ def insert_event(cursor, event):
         json.dumps(event),
         datetime.now(),
     ))
-
+def delete_event(cursor, event_id):
+    cursor.execute('DELETE FROM events WHERE id = ?', (event_id))
+    print(f"Deleted event")
 
 def insert_calendar(cursor, calendar):
     cursor.execute('''
@@ -138,6 +164,9 @@ def insert_calendar(cursor, calendar):
     datetime.now()
 ))
 
+def delete_calendar(cursor, calendar_id):
+    cursor.execute('DELETE FROM events WHERE id = ?', (calendar_id))
+    print(f"Deleted event")
 
     #if api_event.etag is in databasee, do not update
 def insert_task(cursor, event):
@@ -158,6 +187,11 @@ def insert_task(cursor, event):
         json.dumps(event),
         datetime.now(),
     ))
+
+def delete_task(cursor, task_id):
+    cursor.execute('DELETE FROM events WHERE id = ?', (task_id))
+    print(f"Deleted task")
+
 def insert_task_list(cursor, list):
     cursor.execute('''
     INSERT OR REPLACE INTO task_lists (id, etag, title, updated, raw_data, synced_at)

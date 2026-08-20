@@ -21,7 +21,7 @@ print("google httperror imported")
 
 from src.local_dir import TascalApp
 print("src local directory imported")
-from src.db_schema import update_check, insert_event, insert_task, insert_calendar, insert_task_list
+from src.db_schema import update_check, get_sync_token, save_sync_token, insert_event, delete_event, insert_task, insert_calendar, insert_task_list, delete_calendar, delete_task
 print("src loca dir imported")
 
 
@@ -67,7 +67,7 @@ def google_api_connect():    # rename to "Connect"
 
 
 def full_update(creds):
-    app= TascalApp
+    app= TascalApp()
     conn = sqlite3.connect(app.db_path)
     cursor = conn.cursor()
 #Attach the incoming calendar apis to their respective tables
@@ -75,11 +75,11 @@ def full_update(creds):
     #Build services and transfer to the database
     try:
         calendarService = build("calendar", "v3", credentials=creds)
-        calendarEvents =get_calendar_events(calendarService)
-        calendarList = get_calendars(calendarService)
+        calendarEvents =get_calendar_events(calendarService, cursor)
+        calendarList = get_calendars(calendarService, cursor)
 
         taskService = build("tasks", "v1", credentials=creds)
-        taskEvents = get_tasks(taskService)
+        taskEvents = get_tasks(taskService, cursor)
         taskLists = get_task_lists(taskService)
 
     except HttpError as error:
@@ -90,20 +90,29 @@ def full_update(creds):
         #print(f"Tasks: {taskEvents}")
         if calendarEvents != None:
             for event in calendarEvents:
-                if update_check(cursor, event):
-                    #print(f"inserting event")
-                    insert_event(cursor, event)
+                if event.get('status') == 'cancelled':
+                    delete_event(cursor, event['id'])
+                else:    
+                    if update_check(cursor, event):
+                        #print(f"inserting event")
+                        insert_event(cursor, event)
 
         if calendarList != None:
             for calendar in calendarList:
-                if update_check (cursor, calendar):
-                    insert_calendar(cursor, calendar)
+                if calendar.get('deleted') == True:
+                    delete_calendar(cursor, calendar['id'])
+                else:
+                    if update_check (cursor, calendar):
+                        insert_calendar(cursor, calendar)
         
         if taskEvents != None:
+
             for task in taskEvents:
-                #print(f"inserting task {task}")
-                if update_check(cursor, task):
-                    insert_task(cursor, task)
+                if task.get('deleted') == True:
+                    delete_task(cursor, task['id'])
+                else:
+                    if update_check(cursor, task):
+                        insert_task(cursor, task)
 
         if taskLists != None:
             for list in taskLists:
@@ -121,86 +130,165 @@ def full_update(creds):
 
 
 
-def get_calendars(service):
+def get_calendars(service, cursor):
+
+    sync_token = get_sync_token(cursor, 'calendar_list', None)
     all_calendars = []
     page_token = None
 
-    while True:
-        calendars_result = service.calendarList().list(pageToken = page_token).execute()
+    try:
+        while True:
+            params = {  
+                        'pageToken': page_token
+                        }
 
-        calendars = calendars_result.get("items", [])
-        all_calendars.extend(calendars)
+            if sync_token:
+                params['syncToken'] = sync_token
 
-        page_token = calendars_result.get("nextPageToken")
+            calendars_result = service.calendarList().list(**params).execute()
 
-        if not page_token:
+            calendars = calendars_result.get("items", [])
+            all_calendars.extend(calendars)
+
+            page_token = calendars_result.get("nextPageToken")
+
+            if page_token:
+                continue
+
+            new_sync_token = calendars_result.get('nextSyncToken')
+            if new_sync_token:
+                save_sync_token(cursor, 'calendar_list', None, new_sync_token)
+                print(f"Saved new syncToken")
+
             break
+
+    except HttpError as e:
+        if e.resp.status == 410:
+            print("Sync token expired, performing full sync")
+            cursor.execute('DELETE FROM sync_state WHERE resource_type=? AND resource_id=?', ('calendar_list', None ))
+            return get_calendars(service, cursor)
+        else:
+            raise
 
     print(f"\nTotal calendars: {len(all_calendars)}")
     return all_calendars
 
 
-def get_calendar_events(service):
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
-    now_iso = now.isoformat()
-    year_datetime = datetime.datetime(now.year,12,31,23,59,59, tzinfo=datetime.timezone.utc).isoformat()
+def get_calendar_events(service, cursor, calendar_id="primary"):
 
+    sync_token = get_sync_token(cursor, 'calendar_events', calendar_id)
     all_events = []
     page_token = None
 
-    while True:
-        events_results = service.events().list(
-            calendarId="primary",
-            singleEvents=True,
-            orderBy="startTime",
-            timeMax=year_datetime,
-            pageToken=page_token
-        ).execute()
+    try:
+        while True:
 
+            params = {
+                'calendarId': calendar_id,
+                'singleEvents':True,
+                'pageToken': page_token
+            }
 
-        events = events_results.get('items',[])
-        all_events.extend(events)
+            if sync_token:
+                params['syncToken'] = sync_token
+                print(f"Using synctoken from incremental sync")
+            else:
+                now = datetime.datetime.now(tz=datetime.timezone.utc)
+                now_iso = now.isoformat()
+                year_end = datetime.datetime(now.year,12,31,23,59,59, tzinfo=datetime.timezone.utc).isoformat()
 
-        page_token = events_results.get('nextPageToken')
+                params['timeMax'] = year_end
+                print(f"Full sync - fetching all events for {now.year}")
 
-        if not page_token:
+            events_results = service.events().list(**params).execute()
+            events = events_results.get('items',[])
+            all_events.extend(events)
+
+            page_token = events_results.get('nextPageToken')
+            if page_token:
+                continue
+
+            new_sync_token = events_results.get('nextSyncToken')
+            if new_sync_token:
+                save_sync_token(cursor,'calendar_events', calendar_id, new_sync_token)
+                print(f"Saved new syncToken")
+
             break
+
+
+    except HttpError as e:
+        if e.resp.status == 410:
+            print("Sync token expired, performing full sync")
+            cursor.execute('DELETE FROM sync_state WHERE resource_type=? AND resource_id=?', ('calendar_events', calendar_id))
+            return get_calendar_events(service, cursor, calendar_id)
+        else:
+            raise
 
     json_size = len(json.dumps(all_events))
     print(f"JSON size: {json_size / 1024:.2f} KB")
     print(f"Total events pulled: {len(all_events)}")
-    if not events:
-        print("No upcoming events found,")
-        return []
-
+    
     return all_events 
 
 
-def get_tasks(service):
-    print("\n---TASKS---\n")
+def get_tasks(service, cursor):
 
-    results = service.tasklists().list().execute()
-    task_lists= results.get("items", [])
-    no_lists = len(task_lists)
-
-    if not task_lists:
-        print("No tasks found.")
-        return
-
-    #task_list_id = task_lists[0]["id"]
-
-    #task_results = service.tasks().list(tasklist=task_list_id).execute()
     all_tasks = []
 
-    for i in range(no_lists):
-        task_results = service.tasks().list(tasklist=task_lists[i]["id"]).execute()
-        tasks = task_results.get("items", [])
+    try: 
+        results = service.tasklists().list().execute()
+        task_lists= results.get("items", [])
 
-        for task in tasks:
-            task['taskListID'] = i
-            print(f"- {task['title']}")
+        if not task_lists:
+            print("No tasks found.")
+            return 
 
-        all_tasks.extend(tasks)
+    except Exception as e:
+        print(f"Error {e}")
+    
+
+    try:
+        for task_list in task_lists:
+            task_list_id = task_list['id']
+            page_token = None 
+
+            while True:
+                params = {'tasklist': task_list_id}
+                sync_token = get_sync_token(cursor, 'tasks', task_list_id)
+
+                if sync_token:
+                    params['syncToken'] = sync_token
+                    print("Using synctoken for incremental sync")
+                else:
+                    params['pageToken'] = page_token
+
+                task_results = service.tasks().list(**params).execute()
+                tasks = task_results.get("items", [])
+
+                for task in tasks:
+                    task['taskListID'] = task_list_id
+
+                all_tasks.extend(tasks)
+
+                page_token = task_results.get('nextPageToken')
+                if page_token:
+                    continue
+
+                new_sync_token = task_results.get('nextSyncToken')
+                if new_sync_token:
+                    save_sync_token(cursor, 'tasks', task_list_id, new_sync_token)
+                    print(f"Saved new sync token {new_sync_token}")
+
+                break
+
+    except HttpError as e:
+        if e.resp.status == 410:
+            print("Sync token expired, performing full sync")
+            cursor.execute('DELETE FROM sync_state WHERE resource_type=? AND resource_id=?', ('tasks', task_list_id))
+            return get_tasks(service, cursor)
+        else:
+            raise
+
     return all_tasks
 
 def get_task_lists(service):
