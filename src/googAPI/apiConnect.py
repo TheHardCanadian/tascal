@@ -1,31 +1,24 @@
 import datetime
-print("Datetime imported")
 import os.path
-print("OS path imported")
+from dateutil import parser
 import sqlite3
-print("sqlite imported")
 import logging
-print("logging imported")
 import json
 from google.auth.transport.requests import Request
-print("google request imported")
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
-print("google credentials imported")
 from google_auth_oauthlib.flow import InstalledAppFlow
-print("google flow imported")
 from googleapiclient.discovery import build
-print("google build imported")
 from googleapiclient.errors import HttpError
-print("google httperror imported")
+from prompt_toolkit import prompt
+from prompt_toolkit.completion import WordCompleter
 
+from src.functions import dateParse
 from src.local_dir import TascalApp
-print("src local directory imported")
 from src.db_schema import update_check, get_sync_token, save_sync_token, insert_event, delete_event, insert_task, insert_calendar, insert_task_list, delete_calendar, delete_task
-print("src loca dir imported")
 
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/tasks" ]
+SCOPES = ["https://www.googleapis.com/auth/calendar","https://www.googleapis.com/auth/tasks" ]
 
 def google_api_connect():    # rename to "Connect"
     print("Starting main")
@@ -310,11 +303,5 @@ def get_task_lists(service):
     return all_tasklists
 
 
-
 if __name__ == "__main__":
     google_api_connect()
-"""
-Potential commands
-
-
-"""
