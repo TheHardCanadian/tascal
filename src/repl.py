@@ -40,6 +40,7 @@ class TascalREPL(cmd.Cmd):
         self.conn = None
         self.calendar_service = None
         self.task_service = None
+        self.last_results = {}
 
 
         self.initialize()
@@ -115,16 +116,18 @@ class TascalREPL(cmd.Cmd):
             today = date.today().isoformat()
 
             self.cursor.execute("""
-            SELECT title, start_time, end_time
+            SELECT id, title, start_time, end_time, time_zone, description
             FROM events
             WHERE DATE(start_time) = DATE(?)
             ORDER BY start_time                      
             """, (today,))
 
             events = self.cursor.fetchall()
+            self.last_results = {e[1]: e for e in events}  
+
             if events:
                 print("\nToday's schedule currently looks like:\n")
-                for title, start, end in events:
+                for event_id, title, start, end, time_zone, description in events:
                     print(f" - {title}: {simplifyTime(start)} -> {simplifyTime(end)}")
                 print("\n")
             else:
@@ -174,12 +177,13 @@ class TascalREPL(cmd.Cmd):
 
 
             self.cursor.execute("""
-            SELECT title, start_time, end_time FROM events
+            SELECT id, title, start_time, end_time, time_zone, description FROM events
             WHERE DATE(start_time) BETWEEN DATE(?) AND DATE(?)
             ORDER BY start_time
             """, (today.isoformat(), enddate.isoformat()))
 
             events = self.cursor.fetchall()
+            self.last_results = {e[1]: e for e in events}
 
             self.cursor.execute("""
             SELECT title, due_date, status FROM tasks
@@ -193,7 +197,7 @@ class TascalREPL(cmd.Cmd):
             if events:
                 print(f"\nUpcoming: {timeframe} \n")
                 print(f"---Today ({current_date})---\n")
-                for title, start, end in events:
+                for event_id, title, start, end, time_zone, description in events:
                     current_date = dateCheck(start, current_date)
                     print(f"- {title}: {simplifyTime(start)} -> {simplifyTime(end)}")
                 print()
@@ -252,6 +256,65 @@ class TascalREPL(cmd.Cmd):
         except HttpError as error:
             print(f"Http Error: {error}")
     
+    def do_edit(self, arg):
+
+        if not self.last_results:
+            print("No recent results to query the search from, default to upcoming week")
+            self.do_upcoming("week") 
+
+        event_names = list(self.last_results.keys())
+        completer = WordCompleter(event_names, ignore_case=True)    
+    
+        while True:
+            event_name = prompt("Search event by title from the most recent search: ", completer=completer)
+
+            if event_name in ["back", "cancel", "return"]:
+                return
+            if event_name not in self.last_results:
+                print(f"Event not in recent results, pick an event that is in recent results: Available: {', '.join(event_names)}")
+                continue            
+            event_id, title, start_time, end_time, time_zone, description = self.last_results[event_name] 
+            break
+        
+        editable_fields = {
+                    'summary': title,
+                    'description': description,
+                    'start': start_time,
+                    'end': end_time,
+                }
+        field_completer = WordCompleter(list(editable_fields.keys()), ignore_case=True)
+        patch_body = {}         
+
+        while True:
+            field_edit = prompt(f"Select a field to edit ({', '.join(event_names)})", completer=field_completer)
+            if not field_edit:
+                break
+            if field_edit not in editable_fields:
+                print(f"Unknown field '{field_edit}'. Options: {', '.join(editable_fields.keys())}")
+                continue
+
+            current_value = editable_fields[field_edit]
+            new_value = prompt(f"{field_edit.capitalize()} [{current_value}]:") or current_value
+
+            if field_edit in ('start', 'end'):
+                patch_body[field_edit] = {'dateTime':dateParse(field_edit), 'timeZone':time_zone}
+            else:
+                patch_body[field_edit] = new_value
+
+        if not patch_body:
+            print("No Fields Selected, nothing to update")
+            return
+
+        try:
+            service = build("calendar", "v3", credentials = self.creds)
+            result = service.events().patch(calendarId="primary", eventId=event_id, body=patch_body).execute()
+            insert_event(self.cursor, result)
+            self.conn.commit()
+            print(f"Event udpated: {result['summary']}")
+
+        except HttpError as error:
+            print(f"Http Error: {error}")
+
 
     def do_exit(self, arg):
         print("Exiting the program....\nThanks for using Tascal!")
